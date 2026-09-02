@@ -297,8 +297,8 @@ async def test_project(dut):
 
     dut._log.info("TEST 3 PASSED")
 
-    # ========================================================
-    # TEST 4 : OVERFLOW
+       # ========================================================
+    # TEST 4 : OVERFLOW / RESULT TRUNCATION
     #
     # W = [7, 7, 7, 7]
     # X = [7, 7, 7, 7]
@@ -307,14 +307,17 @@ async def test_project(dut):
     #
     # 49 + 49 + 49 + 49 = 196
     #
-    # Signed 8-bit range:
-    # -128 ... +127
+    # The internal accumulator is 12 bits, so it can represent
+    # 196 correctly.
     #
-    # Therefore overflow must be asserted.
+    # Only result_o[7:0] is exposed through uo_out.
+    #
+    # 196 = 8'hC4
+    #     = -60 when interpreted as signed 8-bit.
     # ========================================================
 
     dut._log.info("----------------------------------------")
-    dut._log.info("TEST 4 : OVERFLOW")
+    dut._log.info("TEST 4 : OVERFLOW / RESULT TRUNCATION")
     dut._log.info("----------------------------------------")
 
     await clear_accumulator(dut)
@@ -333,17 +336,19 @@ async def test_project(dut):
     result_raw = int(dut.uo_out.value)
     result = signed8(result_raw)
 
-    dut._log.info(f"RESULT        = {result}")
+    dut._log.info(f"RESULT RAW   = 0x{result_raw:02X}")
+    dut._log.info(f"RESULT SIGNED = {result}")
     dut._log.info("EXPECTED SUM  = 196")
+    dut._log.info("EXPECTED OUTPUT = 0xC4 (-60 signed)")
 
-    # overflow is a wire inside tt_um_4tap_mac
-    overflow = int(dut.user_project.overflow.value)
+    assert result_raw == 0xC4, (
+        f"TEST 4 FAILED: expected uo_out=0xC4, "
+        f"got 0x{result_raw:02X}"
+    )
 
-    dut._log.info(f"OVERFLOW FLAG = {overflow}")
-
-    assert overflow == 1, (
-        f"TEST 4 FAILED: expected overflow=1, "
-        f"got {overflow}"
+    assert result == -60, (
+        f"TEST 4 FAILED: expected signed output=-60, "
+        f"got {result}"
     )
 
     dut._log.info("TEST 4 PASSED")

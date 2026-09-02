@@ -3,7 +3,7 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import ClockCycles
+from cocotb.triggers import RisingEdge, FallingEdge, Timer
 
 
 # ------------------------------------------------------------
@@ -11,71 +11,95 @@ from cocotb.triggers import ClockCycles
 # ------------------------------------------------------------
 
 async def write_weight(dut, addr, data):
-    """
-    Load a signed 4-bit weight into the selected tap.
-    """
+    """Load a signed 4-bit weight into the selected tap."""
 
     # Convert signed 4-bit value to two's complement representation
     data &= 0xF
 
-    dut.ui_in.value = (addr & 0x3) | (1 << 2)       # weight_we = 1
+    await FallingEdge(dut.clk)
+
+    # Select tap
+    dut.ui_in.value = (
+        (addr & 0x3) |
+        (1 << 2)          # LOAD_WEIGHT
+    )
+
+    # Put 4-bit signed data on uio_in[3:0]
     dut.uio_in.value = data
 
-    await ClockCycles(dut.clk, 1)
+    # Hold write enable through the rising edge
+    await RisingEdge(dut.clk)
+
+    # Release controls after the write has occurred
+    await FallingEdge(dut.clk)
 
     dut.ui_in.value = 0
 
 
 async def write_sample(dut, addr, data):
-    """
-    Load a signed 4-bit sample into the selected tap.
-    """
+    """Load a signed 4-bit sample into the selected tap."""
 
     # Convert signed 4-bit value to two's complement representation
     data &= 0xF
 
-    dut.ui_in.value = (addr & 0x3) | (1 << 3)       # sample_we = 1
+    await FallingEdge(dut.clk)
+
+    # Select tap
+    dut.ui_in.value = (
+        (addr & 0x3) |
+        (1 << 3)          # LOAD_SAMPLE
+    )
+
+    # Put 4-bit signed data on uio_in[3:0]
     dut.uio_in.value = data
 
-    await ClockCycles(dut.clk, 1)
+    # Hold write enable through the rising edge
+    await RisingEdge(dut.clk)
+
+    # Release controls after the write has occurred
+    await FallingEdge(dut.clk)
 
     dut.ui_in.value = 0
 
 
 async def clear_accumulator(dut):
-    """
-    Clear the MAC accumulator.
-    """
+    """Clear the MAC accumulator."""
 
-    dut.ui_in.value = 1 << 6                         # clear_acc = 1
+    await FallingEdge(dut.clk)
 
-    await ClockCycles(dut.clk, 1)
+    # ui_in[6] = clear_acc
+    dut.ui_in.value = 1 << 6
+
+    # Clear occurs at this rising edge
+    await RisingEdge(dut.clk)
+
+    await FallingEdge(dut.clk)
 
     dut.ui_in.value = 0
 
 
 async def start_mac(dut, accumulate=False):
-    """
-    Start the MAC operation.
+    """Start a MAC operation."""
 
-    accumulate=False:
-        Replace the accumulator with the new MAC result.
+    await FallingEdge(dut.clk)
 
-    accumulate=True:
-        Add the new MAC result to the existing accumulator.
-    """
+    # ui_in[4] = start
+    # ui_in[5] = accumulate
+    dut.ui_in.value = (
+        (1 << 4) |
+        ((1 << 5) if accumulate else 0)
+    )
 
-    dut.ui_in.value = (1 << 4) | ((1 << 5) if accumulate else 0)
+    # MAC occurs at this rising edge
+    await RisingEdge(dut.clk)
 
-    await ClockCycles(dut.clk, 1)
+    await FallingEdge(dut.clk)
 
     dut.ui_in.value = 0
 
 
 def signed8(value):
-    """
-    Convert an unsigned 8-bit value to signed integer.
-    """
+    """Convert an unsigned 8-bit value to a signed integer."""
 
     value = int(value) & 0xFF
 
@@ -99,11 +123,10 @@ async def test_project(dut):
     # --------------------------------------------------------
     #
     # Participant testbench:
+    #
     # always #5 clk = ~clk;
     #
-    # Therefore:
     # 10 ns period = 100 MHz
-    #
     # --------------------------------------------------------
 
     clock = Clock(dut.clk, 10, unit="ns")
@@ -124,11 +147,12 @@ async def test_project(dut):
 
     dut._log.info("Resetting DUT")
 
-    await ClockCycles(dut.clk, 3)
+    await Timer(20, unit="ns")
 
     dut.rst_n.value = 1
 
-    await ClockCycles(dut.clk, 1)
+    # Allow reset release to settle
+    await Timer(1, unit="ns")
 
     dut._log.info("Reset released")
 
@@ -163,7 +187,9 @@ async def test_project(dut):
     dut._log.info(f"RESULT   = {result}")
     dut._log.info("EXPECTED = 30")
 
-    assert result == 30, f"TEST 1 FAILED: expected 30, got {result}"
+    assert result == 30, (
+        f"TEST 1 FAILED: expected 30, got {result}"
+    )
 
     dut._log.info("TEST 1 PASSED")
 
@@ -198,7 +224,9 @@ async def test_project(dut):
     dut._log.info(f"RESULT   = {result}")
     dut._log.info("EXPECTED = -10")
 
-    assert result == -10, f"TEST 2 FAILED: expected -10, got {result}"
+    assert result == -10, (
+        f"TEST 2 FAILED: expected -10, got {result}"
+    )
 
     dut._log.info("TEST 2 PASSED")
 
@@ -224,7 +252,7 @@ async def test_project(dut):
 
     await clear_accumulator(dut)
 
-    # First set of weights
+    # First MAC
     weights = [1, 1, 1, 1]
     samples = [1, 1, 1, 1]
 
@@ -234,7 +262,6 @@ async def test_project(dut):
     for addr in range(4):
         await write_sample(dut, addr, samples[addr])
 
-    # First MAC = 4
     await start_mac(dut, accumulate=False)
 
     first_result = signed8(dut.uo_out.value)
@@ -242,7 +269,8 @@ async def test_project(dut):
     dut._log.info(f"FIRST MAC RESULT = {first_result}")
 
     assert first_result == 4, (
-        f"TEST 3 FIRST MAC FAILED: expected 4, got {first_result}"
+        f"TEST 3 FIRST MAC FAILED: expected 4, "
+        f"got {first_result}"
     )
 
     # Change weights to 2
@@ -252,16 +280,19 @@ async def test_project(dut):
         await write_weight(dut, addr, weights[addr])
 
     # Second MAC = 8
-    # Accumulate with previous 4
+    # Accumulate with previous result = 4 + 8 = 12
     await start_mac(dut, accumulate=True)
 
     accumulated_result = signed8(dut.uo_out.value)
 
-    dut._log.info(f"ACCUMULATED RESULT = {accumulated_result}")
+    dut._log.info(
+        f"ACCUMULATED RESULT = {accumulated_result}"
+    )
     dut._log.info("EXPECTED           = 12")
 
     assert accumulated_result == 12, (
-        f"TEST 3 FAILED: expected 12, got {accumulated_result}"
+        f"TEST 3 FAILED: expected 12, "
+        f"got {accumulated_result}"
     )
 
     dut._log.info("TEST 3 PASSED")
@@ -272,19 +303,14 @@ async def test_project(dut):
     # W = [7, 7, 7, 7]
     # X = [7, 7, 7, 7]
     #
-    # Each product:
-    #
-    # 7 * 7 = 49
-    #
-    # Total:
+    # 7*7 = 49
     #
     # 49 + 49 + 49 + 49 = 196
     #
-    # 196 is outside signed 8-bit range:
-    #
+    # Signed 8-bit range:
     # -128 ... +127
     #
-    # Therefore overflow_o must be 1.
+    # Therefore overflow must be asserted.
     # ========================================================
 
     dut._log.info("----------------------------------------")
@@ -310,13 +336,14 @@ async def test_project(dut):
     dut._log.info(f"RESULT        = {result}")
     dut._log.info("EXPECTED SUM  = 196")
 
-    # overflow is internal to mac4 and is reachable hierarchically
-    overflow = int(dut.user_project.u_mac.overflow.value)
+    # overflow is a wire inside tt_um_4tap_mac
+    overflow = int(dut.user_project.overflow.value)
 
     dut._log.info(f"OVERFLOW FLAG = {overflow}")
 
     assert overflow == 1, (
-        f"TEST 4 FAILED: expected overflow=1, got {overflow}"
+        f"TEST 4 FAILED: expected overflow=1, "
+        f"got {overflow}"
     )
 
     dut._log.info("TEST 4 PASSED")
